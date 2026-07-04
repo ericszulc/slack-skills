@@ -9,9 +9,9 @@ whiteboard. The skills work in any agent, with special attention to running insi
 
 | Skill | Role | Tools it needs |
 |-------|------|----------------|
-| [`facilitate-session`](facilitate-session/SKILL.md) | Front door — reads the Slack channel, sequences the work, posts the board link, syncs back | **Slack** |
-| [`recommend-collaborative-activity`](recommend-collaborative-activity/SKILL.md) | Turns a need-summary into a recommended activity + whiteboard blueprint | **none** |
-| [`create-whiteboard`](create-whiteboard/SKILL.md) | Turns a blueprint + Salesforce records into a laid-out Miro board | **Salesforce + Miro** |
+| [`facilitate-session`](skills/facilitate-session/SKILL.md) | Front door — reads the Slack channel, sequences the work, posts the board link, syncs back | **Slack** |
+| [`recommend-collaborative-activity`](skills/recommend-collaborative-activity/SKILL.md) | Turns a need-summary into a recommended activity + whiteboard blueprint | **none** |
+| [`create-whiteboard`](skills/create-whiteboard/SKILL.md) | Turns a blueprint + Salesforce records into a laid-out Miro board | **Salesforce + Miro** |
 
 `facilitate-session` orchestrates the other two by name. The split keeps each skill focused and
 independently reusable, and isolates the Slack dependency to one place so the other two stay
@@ -42,8 +42,9 @@ support lands, the same content ports over — the Slack skill-canvas convention
 
 ## Using in any other agent
 
-Register all three skill folders (`facilitate-session/`, `recommend-collaborative-activity/`,
-`create-whiteboard/`) so the agent can see them; `facilitate-session` calls the other two by name.
+Register all three skill folders under `skills/` (`facilitate-session/`,
+`recommend-collaborative-activity/`, `create-whiteboard/`) so the agent can see them;
+`facilitate-session` calls the other two by name.
 Works in the Claude Code terminal, Claude.ai, or anywhere the three load together — no manual import
 step.
 
