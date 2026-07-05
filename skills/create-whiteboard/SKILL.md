@@ -25,10 +25,11 @@ without one, see Phase 1 — ask which activity to run, or fall back to a simple
 
 ## What this skill expects as input
 
-- **An activity blueprint** — the *Digital Whiteboard Setup* for the chosen activity: how many
-  zones, the axis labels or column structure, and which zones get distinct colors. Usually handed
-  over by `recommend-collaborative-activity` (often via `facilitate-session`). Optional — without it,
-  you'll use a grid.
+- **An activity setup** — the *Digital Whiteboard Setup* for the chosen activity, in its standard
+  slots: *frame & layout*, *axes*, *zones* (their labels and colors), and a *placing-items* rule.
+  Usually handed over by `recommend-collaborative-activity` (often via `facilitate-session`).
+  Optional — without it, you'll use a grid. You don't need to know the activity by name; just render
+  the slots.
 - **Salesforce criteria** — which records to fetch (object + filter + sort) and which fields to show.
 - **A Miro board** — a name, a URL, or permission to create one.
 
@@ -43,6 +44,41 @@ without one, see Phase 1 — ask which activity to run, or fall back to a simple
 
 If your confirmation is going into Slack, use *mrkdwn*: `*bold*` (single asterisks), no `#` headers,
 unicode emoji are fine. In a terminal or Claude.ai, normal markdown is fine. Match the surface.
+
+## Working with the Miro connector
+
+These rules are general to any board you build through the Miro connector (the layout-DSL–based MCP).
+Most build failures come from missing one, so keep them in mind across Phases 3–5.
+
+- **Creation is DSL-only — there is no per-item tool.** There's no "create sticky / shape / frame"
+  call. You build items by writing DSL and passing it to `layout_create`. Call `layout_get_dsl`
+  **once** at the start to load the current syntax, then create the frame and all its children in a
+  single `layout_create` batch.
+- **Coordinates, and the bounds rule that fails whole batches.** Frames and other board-level items
+  use board-absolute coordinates (board center = `(0,0)`). Items with `parent=<frame>` use
+  coordinates from the frame's **top-left corner**, and x,y mark the item's **center**. Every child's
+  center must fall inside the frame (`0 ≤ x ≤ frame_w`, `0 ≤ y ≤ frame_h`) — one out-of-bounds item
+  fails the **entire** call. Plan the layout to fit before sending, and check the returned
+  `failed_items`.
+- **Stickies.** Give a sticky **either a width or a height, never both** (aspect is fixed). Use a
+  color from the connector's fixed palette (e.g. `yellow`, `orange`, `dark_blue`, `light_blue`,
+  `green`, `pink`, `gray`). Content is required — pass `" "` for an intentionally blank slot.
+- **Text and fonts.** Miro's default brand font `roobert` is **not** selectable in the DSL and fails
+  if you name it — omit `font` and let it default. Use `<strong>…</strong>` for bold and
+  `<p>…</p><p>…</p>` for multiple lines in one text item.
+- **Connectors are invisible to the item-listing tools — use `context_get` to see them.** Connectors
+  (axis arrows, links) are **not** returned by `board_list_items` (its type list has none) and were
+  missed by `layout_read` too; only `context_get`'s overview reveals them. So when inspecting a
+  board, never conclude "there are no axes/arrows" from the item list — confirm with `context_get`.
+  To create one, add `CONNECTOR from=<item> to=<item> shape=straight end_cap=arrow`; `from`/`to`
+  accept full URLs of items already on the board, and `end_cap=arrow` gives a single arrowhead.
+- **Reading a board takes more than one tool.** Find it with `board_search_boards`; get exact
+  geometry/style of stickies and text with `board_list_items`; get connectors **and** the semantic
+  read (what the zones mean) with `context_get`; use `layout_read` (target a frame via
+  `?moveToWidget=<id>`) to get items back as reusable DSL for cloning or editing.
+- **Board lifecycle.** Creating a board is irreversible — confirm with the user before `board_create`.
+  After building, `context_get` the result to verify it reads back as intended (and that connectors
+  actually landed). Pass `is_repository=true` on these calls when operating inside a git repository.
 
 ---
 
@@ -69,22 +105,27 @@ unicode emoji are fine. In a terminal or Claude.ai, normal markdown is fine. Mat
 
 - Search by board name, or use the URL if provided.
 - If a matrix frame already exists on the board, read its layout to learn the quadrant boundaries
-  (the x/y center point) so your placements line up with what's drawn.
+  (the x/y center point) so your placements line up with what's drawn. Detect the axes with
+  `context_get` — connector arrows don't appear in the item list (see Working with the Miro connector).
 - If there's no matrix frame and the blueprint calls for a quadrant layout, create the stickies in a
   logical grid near the board center.
 - If the board can't be found, ask the user to confirm the name or provide the URL.
 
 ## Phase 4: Map records to positions
 
-Follow the blueprint — its zones, axes, and columns.
+Work purely from the setup you were handed — don't hard-code activity knowledge. The setup gives you
+the zones (labels + colors), any axes, and a **placing-items** rule; follow those.
 
-- Map each record to a zone based on its field values and the activity's logic. (For an Impact/Effort
-  matrix, that's a quadrant from the record's impact and effort; for Rose/Bud/Thorn, a column; for
-  Affinity, a theme cluster.)
-- Give each zone a distinct color where the activity calls for it. For activities with no zone
-  distinction, use a single consistent color — `light_yellow`.
+- For each record, apply the setup's placing-items rule to pick its zone. Usually that means reading
+  the record's fields (or asking the user how to judge them when the setup calls for it) and matching
+  the result to a zone. If the rule is team-driven — nothing maps cleanly — spread the records evenly
+  in a holding area or a single zone for the team to sort live.
+- Color each sticky with its zone's color. Where the setup draws no distinction between zones, use one
+  consistent color — `light_yellow`.
+- Within a zone, arrange stickies in a simple grid.
 
-**Grid fallback:** place stickies in rows of 4–5, evenly spaced, single color (`light_yellow`).
+**No setup / grid fallback:** place stickies in rows of 4–5, evenly spaced, single color
+(`light_yellow`).
 
 ## Phase 5: Create the stickies and return the board
 
@@ -102,21 +143,18 @@ Follow the blueprint — its zones, axes, and columns.
 
 ## Output
 
-Reply with a brief confirmation, matched to the surface (Slack mrkdwn vs. GitHub markdown).
-
-For a matrix layout:
+Reply with a brief confirmation, matched to the surface (Slack mrkdwn vs. GitHub markdown). When the
+setup has distinct zones, add a short per-zone breakdown so the reader sees where things landed:
 
 ```
 ✅ Placed [N] stickies on [Board Name].
 
-Quadrant breakdown:
-🔵 High Importance, High Urgency: [record names]
-🟠 Low Importance, High Urgency: [record names]
-🟡 High Importance, Low Urgency: [record names]
-🔷 Low Importance, Low Urgency: [record names]
+By zone:
+• [Zone label]: [record names]
+• [Zone label]: [record names]
 ```
 
-For a grid layout, just confirm the count and the board name. Include the board URL either way.
+For a plain grid (no zones), just confirm the count and the board name. Include the board URL either way.
 
 ## Key principles
 
