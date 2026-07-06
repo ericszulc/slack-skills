@@ -47,38 +47,30 @@ unicode emoji are fine. In a terminal or Claude.ai, normal markdown is fine. Mat
 
 ## Working with the Miro connector
 
-These rules are general to any board you build through the Miro connector (the layout-DSL–based MCP).
-Most build failures come from missing one, so keep them in mind across Phases 3–5.
+Durable facts about this connector; the build recipe (a fill-in skeleton) is in Phase 5. Call
+`layout_get_dsl` once up front for the exact syntax.
 
-- **Creation is DSL-only — there is no per-item tool.** There's no "create sticky / shape / frame"
-  call. You build items by writing DSL and passing it to `layout_create`. Call `layout_get_dsl`
-  **once** at the start to load the current syntax, then create the frame and all its children in a
-  single `layout_create` batch.
-- **Coordinates, and the bounds rule that fails whole batches.** Frames and other board-level items
-  use board-absolute coordinates (board center = `(0,0)`). Items with `parent=<frame>` use
-  coordinates from the frame's **top-left corner**, and x,y mark the item's **center**. Every child's
-  center must fall inside the frame (`0 ≤ x ≤ frame_w`, `0 ≤ y ≤ frame_h`) — one out-of-bounds item
-  fails the **entire** call. Plan the layout to fit before sending, and check the returned
-  `failed_items`.
-- **Stickies.** Give a sticky **either a width or a height, never both** (aspect is fixed). Use a
-  color from the connector's fixed palette (e.g. `yellow`, `orange`, `dark_blue`, `light_blue`,
-  `green`, `pink`, `gray`). Content is required — pass `" "` for an intentionally blank slot.
-- **Text and fonts.** Miro's default brand font `roobert` is **not** selectable in the DSL and fails
-  if you name it — omit `font` and let it default. Use `<strong>…</strong>` for bold and
-  `<p>…</p><p>…</p>` for multiple lines in one text item.
-- **Connectors are invisible to the item-listing tools — use `context_get` to see them.** Connectors
-  (axis arrows, links) are **not** returned by `board_list_items` (its type list has none) and were
-  missed by `layout_read` too; only `context_get`'s overview reveals them. So when inspecting a
-  board, never conclude "there are no axes/arrows" from the item list — confirm with `context_get`.
-  To create one, add `CONNECTOR from=<item> to=<item> shape=straight end_cap=arrow`; `from`/`to`
-  accept full URLs of items already on the board, and `end_cap=arrow` gives a single arrowhead.
-- **Reading a board takes more than one tool.** Find it with `board_search_boards`; get exact
-  geometry/style of stickies and text with `board_list_items`; get connectors **and** the semantic
-  read (what the zones mean) with `context_get`; use `layout_read` (target a frame via
-  `?moveToWidget=<id>`) to get items back as reusable DSL for cloning or editing.
-- **Board lifecycle.** Creating a board is irreversible — confirm with the user before `board_create`.
-  After building, `context_get` the result to verify it reads back as intended (and that connectors
-  actually landed). Pass `is_repository=true` on these calls when operating inside a git repository.
+- **Place everything at board-absolute coordinates — do not parent items to a frame.** Frame-parenting
+  is unreliable across drivers (frame-parented children have come back HTTP 400) and isn't needed — a
+  board-absolute layout looks identical. Board center is `(0,0)`; x,y are each item's center.
+- **Only three item types are needed:** `TEXT` (title, labels, headings), `STICKY` (records), and
+  `CONNECTOR` (axes/lines). **No `SHAPE`** — no background fills, no divider lines. Zones are conveyed
+  by sticky color + heading text + axis arrows, nothing else.
+- **Axes and lines are connectors between two items** (e.g. the two axis-label texts), never shapes:
+  `CONNECTOR from=<item> to=<item> end_cap=arrow`. `from`/`to` are aliases of items defined in the
+  same batch (or existing item URLs).
+- **`layout_create` is all-or-nothing per item, and its response is your source of truth.** An invalid
+  item (a `font=roobert`, a near-zero shape) fails and lands in `failed_items`; check `created_count`
+  and `failed_items` rather than trusting a bare success, and re-send only what failed.
+- **Colors & fonts.** Sticky colors come from a fixed palette (`yellow`, `orange`, `dark_blue`,
+  `light_blue`, `green`, `pink`, `gray`, …); give a sticky either a width or a height, never both.
+  Never set `font=` — the default is fine and `roobert` fails.
+- **Verifying/reading.** The create response's `failed_items` is authoritative. `board_list_items`
+  lists stickies and text (not connectors). Note `context_get` only summarizes boards that have a
+  frame — a **frameless board returns "no high-level items,"** so rely on the create response, not
+  `context_get`, to confirm a build.
+- **Board lifecycle.** Creating a board is irreversible — confirm before creating one. Pass
+  `is_repository=true` in a git repo.
 
 ---
 
@@ -127,19 +119,48 @@ the zones (labels + colors), any axes, and a **placing-items** rule; follow thos
 **No setup / grid fallback:** place stickies in rows of 4–5, evenly spaced, single color
 (`light_yellow`).
 
-## Phase 5: Create the stickies and return the board
+## Phase 5: Build the board and place the records
 
-- Create all stickies in **one batch operation** where the Miro tool allows it — it's faster and
-  keeps the board from rendering piecemeal.
-- Each sticky shows:
-  - Line 1 (**bold**): the record name
-  - Lines 2–4: key field values in `label: value` format
-- Size 160×160px (square), centered text.
-- When placing inside a frame, position relative to the frame's top-left corner and stay within its
-  bounds.
-- After creating, confirm how many stickies landed and on which board, and **return the board URL**
-  so a caller (or the user) can share it. Posting that link to Slack is the caller's job, not this
-  skill's.
+Compose the DSL by **filling in this skeleton**. It places everything at **board-absolute coordinates
+with no frame** — the arrangement that lands reliably. The rules are baked into its shape; don't add
+item types that aren't here (**no `SHAPE`, no `FRAME`, no `parent=`**):
+
+```
+# Board-absolute coordinates: board center is (0,0); x,y are each item's CENTER.
+# Only TEXT, STICKY, CONNECTOR. No SHAPE (no background fills, no divider lines).
+# No FRAME and no parent=. Never set font=. Sticky content is required.
+title TEXT x=0 y=<top edge> w=640 size=28 align=center "<p><strong><board title></strong></p>"
+
+# One TEXT per label/heading the setup names (axis ends at the outer edges, headings above each zone):
+lblLo TEXT x=<left edge> y=0 w=90 size=24 align=center "<low-axis label>"
+lblHi TEXT x=<right edge> y=0 w=90 size=24 align=center "<high-axis label>"
+
+# One STICKY per record at its zone's position; color = the zone's color:
+s1 STICKY x=<x> y=<y> w=161 color=<zone> "<p><strong>Record name</strong></p><p>value</p><p>value</p>"
+# … one line per record …
+
+# Axes LAST — connectors between the label texts, arrowhead toward the 'high' end:
+axisA CONNECTOR from=lblLo to=lblHi end_cap=arrow
+```
+
+Lay the zones out around the center (a ~2000-wide × 1200-tall spread works well): each zone's stickies
+in a small grid, its heading just above, and the axis labels out at the edges. If the setup says "a
+titled frame," render the title as a `TEXT` at the top and skip the frame object.
+
+Sticky content: line 1 is the record **name** (bold); the next 2–3 lines are its key field values.
+
+**Pre-flight gate — before you call `layout_create`, re-scan the DSL you just wrote:**
+
+1. Any `FRAME` or `parent=`? → remove it; everything is board-absolute.
+2. Any `SHAPE` (background fill, divider, line)? → remove it; zones = sticky color + headings + axis connectors.
+3. Any `font=` (especially `roobert`)? → delete it.
+4. Any `CONNECTOR` whose `from`/`to` isn't a `TEXT`/`STICKY` defined above? → fix it.
+
+Submit only once all four are clean. Then **verify from the response**: `failed_items` must be empty
+and `created_count` must equal the number of items you sent; re-send anything that failed.
+
+Finally, **return the board URL** so a caller (or the user) can share it — posting to Slack is the
+caller's job, not this skill's.
 
 ## Output
 
